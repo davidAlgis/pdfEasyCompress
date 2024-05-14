@@ -1,3 +1,4 @@
 pypdf
+pypdf[image]
 argparse
 tqdm
