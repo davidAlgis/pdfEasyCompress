@@ -1,5 +1,7 @@
 import argparse
 from pypdf import PdfReader, PdfWriter
+from PIL import Image
+import io
 import tqdm
 import os
 
@@ -13,26 +15,29 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
+def create_minimal_white_image():
+    # Create a 1x1 white image
+    return Image.new('RGB', (1, 1), color='white')
+
 # Create the parser
 parser = argparse.ArgumentParser(
     description="Reduce the size of images in a PDF file")
 
 # Add the arguments
-parser.add_argument('-i', '--input', type=str,
-                    help='The PDF file to process')
-parser.add_argument('-o', '--output', type=str, default=None,
-                    help='The name of the output PDF file')
-parser.add_argument('-q', '--quality', type=int, default=80,
-                    help='The quality of the images (default: 80)')
+parser.add_argument('-i', '--input', type=str, help='The PDF file to process')
+parser.add_argument('-o', '--output', type=str, default=None, help='The name of the output PDF file')
+parser.add_argument('-q', '--quality', type=int, default=80, help='The quality of the images (default: 80)')
 parser.add_argument("-l", "--lossless", type=str2bool, nargs='?', const=True, default=True,
                     help="Indicate if compression should be lossless. If true the quality parameters for images will not be applied (default is true)")
+parser.add_argument("-ri", "--removeImages", type=str2bool, nargs='?', const=True, default=False,
+                    help="Replace all images with a minimal white image (default: false)")
+
 # Parse the arguments
 args = parser.parse_args()
 
 # If no output file is specified, use the same name as the input file
 if args.output is None:
     args.output = os.path.splitext(args.input)[0] + "_compressed.pdf"
-
 
 
 if(args.lossless):
@@ -50,6 +55,7 @@ if(args.lossless):
             exit(1)
 else:
     print("Performs a lossy compression...")
+
     try:
         reader = PdfReader(args.input)
     except FileNotFoundError:
@@ -57,23 +63,25 @@ else:
         exit(1)
 
     writer = PdfWriter()
-    # Add pages to the writer
-    try:
-        for page in reader.pages:
-            writer.add_page(page)
-    except Exception as e:
-        print(f"Error: Failed to add a page to the writer. {e}")
-        exit(1)
 
-    # Process images
-    print("Processing images...")
-    try:
-        for page in writer.pages:
-            for img in tqdm.tqdm(page.images, desc="Processing pages"):
+    # Create a minimal white image
+    minimal_white_image = create_minimal_white_image()
+
+    # Process pages
+    print("Processing pages...")
+    for page in tqdm.tqdm(reader.pages, desc="Processing pages"):
+        # Add the page to the writer
+        writer_page = writer.add_page(page)
+        
+        if args.removeImages:
+            for img in writer_page.images:
+                img.replace(minimal_white_image)
+        elif not args.lossless:
+            for img in writer_page.images:
                 img.replace(img.image, quality=args.quality)
-    except Exception as e:
-        print(f"Error: Failed to process an image. {e}")
-        exit(1)
+        
+        if args.lossless:
+            writer_page.compress_content_streams()
 
 # Save the result
 try:
