@@ -19,6 +19,18 @@ def create_minimal_white_image():
     # Create a 1x1 white image
     return Image.new('RGB', (1, 1), color='white')
 
+def parse_page_numbers(pages_string):
+    if not pages_string:
+        return None  # Return None to indicate all pages should be kept
+    pages = set()
+    for part in pages_string.split(','):
+        if '-' in part:
+            start, end = map(int, part.split('-'))
+            pages.update(range(start, end + 1))
+        else:
+            pages.add(int(part))
+    return pages
+
 # Create the parser
 parser = argparse.ArgumentParser(
     description="Reduce the size of images in a PDF file")
@@ -31,6 +43,8 @@ parser.add_argument("-l", "--lossless", type=str2bool, nargs='?', const=True, de
                     help="Indicate if compression should be lossless. If true the quality parameters for images will not be applied (default is true)")
 parser.add_argument("-ri", "--removeImages", type=str2bool, nargs='?', const=True, default=False,
                     help="Replace all images with a minimal white image (default: false)")
+parser.add_argument("-sp", "--selectPages", type=str, default="",
+                    help="Comma-separated list of page numbers or ranges to keep (e.g., '1,3-5,7'). If not specified, all pages are kept.")
 
 # Parse the arguments
 args = parser.parse_args()
@@ -39,49 +53,50 @@ args = parser.parse_args()
 if args.output is None:
     args.output = os.path.splitext(args.input)[0] + "_compressed.pdf"
 
+# Parse the pages to keep
+pages_to_keep = parse_page_numbers(args.selectPages)
 
 if(args.lossless):
     print("Performs a lossless compression...")
     try:
-        writer = PdfWriter(clone_from=args.input)
+        reader = PdfReader(args.input)
+        writer = PdfWriter()
+        for i, page in enumerate(reader.pages, start=1):
+            if pages_to_keep is None or i in pages_to_keep:
+                writer.add_page(page)
+                writer.pages[-1].compress_content_streams()  # This is CPU intensive!
     except FileNotFoundError:
         print(f"Error: The file '{args.input}' was not found.")
         exit(1)
-    for page in writer.pages:
-        try:
-            page.compress_content_streams()  # This is CPU intensive!
-        except Exception as e:
-            print(f"Error: unable to compress content streams. {e}")
-            exit(1)
+    except Exception as e:
+        print(f"Error: unable to compress content streams. {e}")
+        exit(1)
 else:
     print("Performs a lossy compression...")
-
     try:
         reader = PdfReader(args.input)
     except FileNotFoundError:
         print(f"Error: The file '{args.input}' was not found.")
         exit(1)
-
     writer = PdfWriter()
-
     # Create a minimal white image
     minimal_white_image = create_minimal_white_image()
-
     # Process pages
     print("Processing pages...")
-    for page in tqdm.tqdm(reader.pages, desc="Processing pages"):
-        # Add the page to the writer
-        writer_page = writer.add_page(page)
-        
-        if args.removeImages:
-            for img in writer_page.images:
-                img.replace(minimal_white_image)
-        elif not args.lossless:
-            for img in writer_page.images:
-                img.replace(img.image, quality=args.quality)
-        
-        if args.lossless:
-            writer_page.compress_content_streams()
+    for i, page in enumerate(tqdm.tqdm(reader.pages, desc="Processing pages"), start=1):
+        if pages_to_keep is None or i in pages_to_keep:
+            # Add the page to the writer
+            writer_page = writer.add_page(page)
+            
+            if args.removeImages:
+                for img in writer_page.images:
+                    img.replace(minimal_white_image)
+            elif not args.lossless:
+                for img in writer_page.images:
+                    img.replace(img.image, quality=args.quality)
+            
+            if args.lossless:
+                writer_page.compress_content_streams()
 
 # Save the result
 try:
