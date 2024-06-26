@@ -1,4 +1,5 @@
 pypdf
 pypdf[image]
+Pillow
 argparse
 tqdm
