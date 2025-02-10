@@ -38,15 +38,22 @@ def compress_image(image, quality=80, convert_png=True):
     
     if img_format == 'jpeg' or (img_format == 'png' and convert_png):
         if image.mode in ('RGBA', 'LA') or (image.mode == 'P' and 'transparency' in image.info):
-            # If the PNG has an alpha channel, blend it with a white background
             background = Image.new('RGBA', image.size, (255, 255, 255))
             image = Image.alpha_composite(background, image.convert('RGBA')).convert('RGB')
         
         output = io.BytesIO()
         image.save(output, format='JPEG', quality=quality, optimize=True)
+        
+        # Compare sizes
+        compressed_size = output.tell()
+        original_size = len(image.tobytes())
+
+        if compressed_size >= original_size:
+            return image  # Keep original if compressed size is larger
+        
         return Image.open(output)
     else:
-        return image  # Return the original image if it's not JPEG or PNG
+        return image  # Return original image if it's not JPEG or PNG
 
 parser = argparse.ArgumentParser(description="Reduce the size of images in a PDF file")
 parser.add_argument('-i', '--input', type=str, required=True, help='The PDF file to process')
@@ -87,22 +94,47 @@ for i, page in enumerate(tqdm.tqdm(reader.pages, desc="Processing pages"), start
                 img.replace(minimal_white_image)
         elif not args.lossless:
             for img in writer_page.images:
-                compressed_image = compress_image(img.image, quality=args.quality, convert_png=args.convertPNG)
-                img.replace(compressed_image)
+                original_image = img.image  
+                compressed_image = compress_image(original_image, quality=args.quality, convert_png=args.convertPNG)
+                
+                # Compare sizes and replace only if compression is effective
+                original_size = len(original_image.tobytes())
+                compressed_size = len(compressed_image.tobytes())
+
+                if compressed_size < original_size:
+                    img.replace(compressed_image)
         
         if args.lossless:
             writer_page.compress_content_streams()
 
+# Write compressed PDF to a temporary file
+temp_output = args.output + ".temp"
+
 try:
-    with open(args.output, "wb") as f:
+    with open(temp_output, "wb") as f:
         writer.write(f)
 except Exception as e:
     print(f"Error: Failed to save the result. {e}")
     exit(1)
 
-print(f"Done. The result is saved at {args.output}")
+# Compare PDF sizes
+input_size = os.path.getsize(args.input)
+output_size = os.path.getsize(temp_output)
 
-input_size = os.path.getsize(args.input) / (1024 * 1024)
-output_size = os.path.getsize(args.output) / (1024 * 1024)
-size_reduction = (input_size - output_size) / input_size * 100
-print(f"The output file size is {output_size:.2f} MiB which gave us a size reduction of {size_reduction:.2f}%.")
+if output_size >= input_size:
+    print(f"Warning: The compressed PDF ({output_size / (1024 * 1024):.2f} MiB) is larger than the original ({input_size / (1024 * 1024):.2f} MiB). Keeping the original file.")
+    os.remove(temp_output)  # Remove the temporary file
+    final_size = input_size
+    final_path = args.input
+else:
+    # Fix: Remove existing file before renaming to avoid FileExistsError
+    if os.path.exists(args.output):
+        os.remove(args.output)
+    os.rename(temp_output, args.output)
+    
+    final_size = output_size
+    final_path = args.output
+
+size_reduction = (input_size - final_size) / input_size * 100
+print(f"Done. The result is saved at {final_path}")
+print(f"The final file size is {final_size / (1024 * 1024):.2f} MiB, achieving a size reduction of {size_reduction:.2f}%.")
