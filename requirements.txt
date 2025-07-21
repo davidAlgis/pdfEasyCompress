@@ -3,3 +3,4 @@ pypdf[image]
 Pillow
 argparse
 tqdm
+PyMuPDF
